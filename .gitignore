@@ -18,6 +18,3 @@ Thumbs.db
 # Logs
 *.log
 
-# WordPress plugin (if installed)
-wp-remote-update-plugin/
-
