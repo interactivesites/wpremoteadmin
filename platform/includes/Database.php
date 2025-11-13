@@ -84,6 +84,34 @@ class Database {
             )
         ";
         
+        $hosting_contracts_table = "
+            CREATE TABLE IF NOT EXISTS hosting_contracts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                site_id INTEGER NOT NULL,
+                contract_name VARCHAR(255) NOT NULL,
+                start_date DATE NOT NULL,
+                end_date DATE DEFAULT NULL,
+                monthly_price DECIMAL(10,2) DEFAULT 0,
+                yearly_price DECIMAL(10,2) DEFAULT 0,
+                payment_flag_current_year INTEGER DEFAULT 0,
+                contract_file_path VARCHAR(500) DEFAULT NULL,
+                notes TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (site_id) REFERENCES sites(id) ON DELETE CASCADE
+            )
+        ";
+        
+        $hosting_contract_options_table = "
+            CREATE TABLE IF NOT EXISTS hosting_contract_options (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                contract_id INTEGER NOT NULL,
+                option_name VARCHAR(255) NOT NULL,
+                is_included INTEGER DEFAULT 1,
+                FOREIGN KEY (contract_id) REFERENCES hosting_contracts(id) ON DELETE CASCADE
+            )
+        ";
+        
         // Adjust for MySQL
         if (DB_TYPE === 'mysql') {
             $sites_table = str_replace('AUTOINCREMENT', 'AUTO_INCREMENT', $sites_table);
@@ -93,11 +121,23 @@ class Database {
             $update_logs_table = str_replace('AUTOINCREMENT', 'AUTO_INCREMENT', $update_logs_table);
             $update_logs_table = str_replace('INTEGER PRIMARY KEY', 'INT AUTO_INCREMENT PRIMARY KEY', $update_logs_table);
             $update_logs_table = str_replace('INTEGER NOT NULL', 'INT NOT NULL', $update_logs_table);
+            
+            $hosting_contracts_table = str_replace('AUTOINCREMENT', 'AUTO_INCREMENT', $hosting_contracts_table);
+            $hosting_contracts_table = str_replace('INTEGER PRIMARY KEY', 'INT AUTO_INCREMENT PRIMARY KEY', $hosting_contracts_table);
+            $hosting_contracts_table = str_replace('INTEGER NOT NULL', 'INT NOT NULL', $hosting_contracts_table);
+            $hosting_contracts_table = str_replace('INTEGER DEFAULT', 'INT DEFAULT', $hosting_contracts_table);
+            
+            $hosting_contract_options_table = str_replace('AUTOINCREMENT', 'AUTO_INCREMENT', $hosting_contract_options_table);
+            $hosting_contract_options_table = str_replace('INTEGER PRIMARY KEY', 'INT AUTO_INCREMENT PRIMARY KEY', $hosting_contract_options_table);
+            $hosting_contract_options_table = str_replace('INTEGER NOT NULL', 'INT NOT NULL', $hosting_contract_options_table);
+            $hosting_contract_options_table = str_replace('INTEGER DEFAULT', 'INT DEFAULT', $hosting_contract_options_table);
         }
         
         try {
             $this->db->exec($sites_table);
             $this->db->exec($update_logs_table);
+            $this->db->exec($hosting_contracts_table);
+            $this->db->exec($hosting_contract_options_table);
         } catch (PDOException $e) {
             die('Failed to create tables: ' . $e->getMessage());
         }
@@ -235,6 +275,203 @@ class Database {
              ORDER BY l.created_at DESC LIMIT " . intval($limit)
         );
         return $stmt->fetchAll();
+    }
+    
+    // Hosting Contract Methods
+    
+    /**
+     * Get contract for a site
+     * 
+     * @param int $site_id Site ID
+     * @return array|false Contract record or false if not found
+     */
+    public function get_contract($site_id) {
+        $stmt = $this->db->prepare("SELECT * FROM hosting_contracts WHERE site_id = ? LIMIT 1");
+        $stmt->execute(array($site_id));
+        return $stmt->fetch();
+    }
+    
+    /**
+     * Get contract by ID
+     * 
+     * @param int $contract_id Contract ID
+     * @return array|false Contract record or false if not found
+     */
+    public function get_contract_by_id($contract_id) {
+        $stmt = $this->db->prepare("SELECT * FROM hosting_contracts WHERE id = ?");
+        $stmt->execute(array($contract_id));
+        return $stmt->fetch();
+    }
+    
+    /**
+     * Add or update hosting contract
+     * 
+     * @param int $site_id Site ID
+     * @param array $data Contract data
+     * @return int|false Contract ID on success, false on failure
+     */
+    public function save_contract($site_id, $data) {
+        $existing = $this->get_contract($site_id);
+        
+        // Calculate yearly price from monthly if not provided
+        if (empty($data['yearly_price']) && !empty($data['monthly_price'])) {
+            $data['yearly_price'] = floatval($data['monthly_price']) * 12;
+        }
+        
+        if ($existing) {
+            // Update existing contract
+            $stmt = $this->db->prepare(
+                "UPDATE hosting_contracts SET 
+                    contract_name = ?, start_date = ?, end_date = ?, 
+                    monthly_price = ?, yearly_price = ?, 
+                    payment_flag_current_year = ?, 
+                    contract_file_path = ?, notes = ?, 
+                    updated_at = CURRENT_TIMESTAMP 
+                WHERE id = ?"
+            );
+            
+            $stmt->execute(array(
+                $data['contract_name'],
+                $data['start_date'],
+                !empty($data['end_date']) ? $data['end_date'] : null,
+                floatval($data['monthly_price']),
+                floatval($data['yearly_price']),
+                isset($data['payment_flag_current_year']) ? 1 : 0,
+                $data['contract_file_path'] ?? null,
+                $data['notes'] ?? null,
+                $existing['id']
+            ));
+            
+            $contract_id = $existing['id'];
+        } else {
+            // Insert new contract
+            $stmt = $this->db->prepare(
+                "INSERT INTO hosting_contracts 
+                (site_id, contract_name, start_date, end_date, monthly_price, yearly_price, payment_flag_current_year, contract_file_path, notes) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            );
+            
+            $stmt->execute(array(
+                $site_id,
+                $data['contract_name'],
+                $data['start_date'],
+                !empty($data['end_date']) ? $data['end_date'] : null,
+                floatval($data['monthly_price']),
+                floatval($data['yearly_price']),
+                isset($data['payment_flag_current_year']) ? 1 : 0,
+                $data['contract_file_path'] ?? null,
+                $data['notes'] ?? null
+            ));
+            
+            $contract_id = $this->db->lastInsertId();
+        }
+        
+        // Save contract options
+        if ($contract_id && isset($data['options'])) {
+            $this->save_contract_options($contract_id, $data['options']);
+        }
+        
+        return $contract_id;
+    }
+    
+    /**
+     * Save contract options
+     * 
+     * @param int $contract_id Contract ID
+     * @param array $options Array of options
+     * @return bool True on success
+     */
+    public function save_contract_options($contract_id, $options) {
+        // Delete existing options
+        $stmt = $this->db->prepare("DELETE FROM hosting_contract_options WHERE contract_id = ?");
+        $stmt->execute(array($contract_id));
+        
+        // Insert new options
+        if (!empty($options) && is_array($options)) {
+            $stmt = $this->db->prepare(
+                "INSERT INTO hosting_contract_options (contract_id, option_name, is_included) VALUES (?, ?, ?)"
+            );
+            
+            foreach ($options as $option) {
+                if (!empty($option['name'])) {
+                    $stmt->execute(array(
+                        $contract_id,
+                        $option['name'],
+                        isset($option['is_included']) && $option['is_included'] ? 1 : 0
+                    ));
+                }
+            }
+        }
+        
+        return true;
+    }
+    
+    /**
+     * Get contract options
+     * 
+     * @param int $contract_id Contract ID
+     * @return array Array of options
+     */
+    public function get_contract_options($contract_id) {
+        $stmt = $this->db->prepare(
+            "SELECT * FROM hosting_contract_options WHERE contract_id = ? ORDER BY id ASC"
+        );
+        $stmt->execute(array($contract_id));
+        return $stmt->fetchAll();
+    }
+    
+    /**
+     * Delete contract
+     * 
+     * @param int $contract_id Contract ID
+     * @return bool True on success
+     */
+    public function delete_contract($contract_id) {
+        $contract = $this->get_contract_by_id($contract_id);
+        
+        // Delete contract file if exists
+        if ($contract && !empty($contract['contract_file_path'])) {
+            $file_path = __DIR__ . '/../uploads/contracts/' . basename($contract['contract_file_path']);
+            if (file_exists($file_path)) {
+                @unlink($file_path);
+            }
+        }
+        
+        $stmt = $this->db->prepare("DELETE FROM hosting_contracts WHERE id = ?");
+        return $stmt->execute(array($contract_id));
+    }
+    
+    /**
+     * Get payment status for contract
+     * 
+     * @param array $contract Contract data
+     * @return string Status: 'paid', 'due', 'overdue'
+     */
+    public function get_payment_status($contract) {
+        if (empty($contract)) {
+            return 'due';
+        }
+        
+        $current_year = date('Y');
+        $start_year = date('Y', strtotime($contract['start_date']));
+        
+        // If payment flag is set for current year, it's paid
+        if ($contract['payment_flag_current_year']) {
+            return 'paid';
+        }
+        
+        // If we're past the start year and payment not received, it's overdue
+        if ($current_year > $start_year) {
+            return 'overdue';
+        }
+        
+        // If we're in the start year and payment not received, it's due
+        if ($current_year == $start_year) {
+            return 'due';
+        }
+        
+        // Future year, not due yet
+        return 'due';
     }
 }
 

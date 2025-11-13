@@ -1,0 +1,321 @@
+<?php
+require_once __DIR__ . '/includes/config.php';
+require_once __DIR__ . '/includes/auth.php';
+require_once __DIR__ . '/includes/Database.php';
+
+require_login();
+
+$db = new Database();
+$error = '';
+$success = '';
+
+$site_id = isset($_GET['site_id']) ? intval($_GET['site_id']) : 0;
+$site = $db->get_site($site_id);
+
+if (!$site) {
+    header('Location: /index.php');
+    exit;
+}
+
+$contract = $db->get_contract($site_id);
+$options = array();
+if ($contract) {
+    $options = $db->get_contract_options($contract['id']);
+}
+
+// Handle form submission
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // Handle file upload
+    $contract_file_path = null;
+    if (isset($_FILES['contract_file']) && $_FILES['contract_file']['error'] === UPLOAD_ERR_OK) {
+        $upload_dir = __DIR__ . '/uploads/contracts/';
+        if (!is_dir($upload_dir)) {
+            mkdir($upload_dir, 0755, true);
+        }
+        
+        $file_extension = strtolower(pathinfo($_FILES['contract_file']['name'], PATHINFO_EXTENSION));
+        if ($file_extension === 'pdf') {
+            $file_name = 'contract_' . $site_id . '_' . time() . '.pdf';
+            $file_path = $upload_dir . $file_name;
+            
+            if (move_uploaded_file($_FILES['contract_file']['tmp_name'], $file_path)) {
+                $contract_file_path = $file_name;
+                
+                // Delete old file if exists
+                if ($contract && !empty($contract['contract_file_path'])) {
+                    $old_file = $upload_dir . basename($contract['contract_file_path']);
+                    if (file_exists($old_file)) {
+                        @unlink($old_file);
+                    }
+                }
+            } else {
+                $error = 'Failed to upload contract file';
+            }
+        } else {
+            $error = 'Only PDF files are allowed';
+        }
+    } elseif ($contract && !empty($contract['contract_file_path'])) {
+        // Keep existing file if no new file uploaded
+        $contract_file_path = $contract['contract_file_path'];
+    }
+    
+    if (empty($error)) {
+        // Parse options from form
+        $contract_options = array();
+        if (isset($_POST['options']) && is_array($_POST['options'])) {
+            foreach ($_POST['options'] as $option) {
+                if (!empty($option['name'])) {
+                    $contract_options[] = array(
+                        'name' => $option['name'],
+                        'is_included' => isset($option['is_included']) ? 1 : 0
+                    );
+                }
+            }
+        }
+        
+        $data = array(
+            'contract_name' => $_POST['contract_name'] ?? '',
+            'start_date' => $_POST['start_date'] ?? '',
+            'end_date' => $_POST['end_date'] ?? '',
+            'monthly_price' => $_POST['monthly_price'] ?? 0,
+            'yearly_price' => $_POST['yearly_price'] ?? 0,
+            'payment_flag_current_year' => isset($_POST['payment_flag_current_year']) ? 1 : 0,
+            'contract_file_path' => $contract_file_path,
+            'notes' => $_POST['notes'] ?? '',
+            'options' => $contract_options
+        );
+        
+        if (empty($data['contract_name']) || empty($data['start_date'])) {
+            $error = 'Contract name and start date are required';
+        } else {
+            $result = $db->save_contract($site_id, $data);
+            if ($result) {
+                header('Location: /index.php?saved=1');
+                exit;
+            } else {
+                $error = 'Failed to save contract';
+            }
+        }
+    }
+}
+
+// Pre-fill form with existing contract data
+$form_data = $contract ? $contract : array(
+    'contract_name' => '',
+    'start_date' => '',
+    'end_date' => '',
+    'monthly_price' => '',
+    'yearly_price' => '',
+    'payment_flag_current_year' => 0,
+    'contract_file_path' => '',
+    'notes' => ''
+);
+?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hosting Contract - <?php echo htmlspecialchars($site['name']); ?></title>
+    <link rel="stylesheet" href="/assets/style.css">
+    <style>
+        .option-row {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+            align-items: center;
+        }
+        .option-row input[type="text"] {
+            flex: 1;
+        }
+        .option-row .option-toggle {
+            padding: 8px 15px;
+            border: 1px solid #ddd;
+            background: #f5f5f5;
+            cursor: pointer;
+            border-radius: 4px;
+        }
+        .option-row .option-toggle.included {
+            background: #00a32a;
+            color: white;
+            border-color: #00a32a;
+        }
+        .option-row .option-toggle.excluded {
+            background: #d63638;
+            color: white;
+            border-color: #d63638;
+        }
+        .remove-option {
+            background: #d63638;
+            color: white;
+            border: none;
+            padding: 8px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Hosting Contract - <?php echo htmlspecialchars($site['name']); ?></h1>
+            <div class="header-actions">
+                <a href="/index.php" class="btn btn-secondary">Back to Dashboard</a>
+            </div>
+        </header>
+        
+        <?php if ($error): ?>
+            <div class="alert alert-error"><?php echo htmlspecialchars($error); ?></div>
+        <?php endif; ?>
+        
+        <?php if ($success): ?>
+            <div class="alert alert-success"><?php echo htmlspecialchars($success); ?></div>
+        <?php endif; ?>
+        
+        <div class="form-container">
+            <form method="POST" action="" enctype="multipart/form-data">
+                <input type="hidden" name="site_id" value="<?php echo $site_id; ?>">
+                
+                <div class="form-group">
+                    <label for="contract_name">Contract Name *</label>
+                    <input type="text" id="contract_name" name="contract_name" required 
+                           value="<?php echo htmlspecialchars($form_data['contract_name']); ?>">
+                </div>
+                
+                <div class="form-group">
+                    <label for="start_date">Start Date *</label>
+                    <input type="date" id="start_date" name="start_date" required 
+                           value="<?php echo htmlspecialchars($form_data['start_date']); ?>"
+                           onchange="calculateYearlyPrice()">
+                </div>
+                
+                <div class="form-group">
+                    <label for="end_date">End Date (Optional)</label>
+                    <input type="date" id="end_date" name="end_date" 
+                           value="<?php echo htmlspecialchars($form_data['end_date'] ?? ''); ?>">
+                </div>
+                
+                <div class="form-group">
+                    <label for="monthly_price">Monthly Price</label>
+                    <input type="number" id="monthly_price" name="monthly_price" step="0.01" 
+                           value="<?php echo htmlspecialchars($form_data['monthly_price']); ?>"
+                           onchange="calculateYearlyPrice()">
+                </div>
+                
+                <div class="form-group">
+                    <label for="yearly_price">Yearly Price</label>
+                    <input type="number" id="yearly_price" name="yearly_price" step="0.01" 
+                           value="<?php echo htmlspecialchars($form_data['yearly_price']); ?>"
+                           onchange="calculateMonthlyPrice()">
+                    <small>Auto-calculated from monthly price if left empty</small>
+                </div>
+                
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" name="payment_flag_current_year" value="1" 
+                               <?php echo ($form_data['payment_flag_current_year'] ?? 0) ? 'checked' : ''; ?>>
+                        Payment received for current year
+                    </label>
+                </div>
+                
+                <div class="form-group">
+                    <label>Included Options</label>
+                    <div id="options-container">
+                        <?php if (!empty($options)): ?>
+                            <?php foreach ($options as $index => $option): ?>
+                                <div class="option-row">
+                                    <input type="text" name="options[<?php echo $index; ?>][name]" 
+                                           value="<?php echo htmlspecialchars($option['option_name']); ?>" 
+                                           placeholder="Option name">
+                                    <button type="button" class="option-toggle <?php echo $option['is_included'] ? 'included' : 'excluded'; ?>" 
+                                            data-index="<?php echo $index; ?>"
+                                            onclick="toggleOption(<?php echo $index; ?>)">
+                                        <?php echo $option['is_included'] ? '+' : '-'; ?>
+                                    </button>
+                                    <input type="hidden" name="options[<?php echo $index; ?>][is_included]" 
+                                           id="option_<?php echo $index; ?>_included" 
+                                           value="<?php echo $option['is_included']; ?>">
+                                    <button type="button" class="remove-option" onclick="removeOption(this)">Remove</button>
+                                </div>
+                            <?php endforeach; ?>
+                        <?php endif; ?>
+                    </div>
+                    <button type="button" class="btn btn-small" onclick="addOption()">+ Add Option</button>
+                </div>
+                
+                <div class="form-group">
+                    <label for="contract_file">Contract PDF File</label>
+                    <input type="file" id="contract_file" name="contract_file" accept=".pdf">
+                    <?php if ($contract && !empty($contract['contract_file_path'])): ?>
+                        <small>Current file: <a href="/view-contract.php?id=<?php echo $contract['id']; ?>" target="_blank">View PDF</a></small>
+                    <?php endif; ?>
+                </div>
+                
+                <div class="form-group">
+                    <label for="notes">Notes</label>
+                    <textarea id="notes" name="notes" rows="4"><?php echo htmlspecialchars($form_data['notes'] ?? ''); ?></textarea>
+                </div>
+                
+                <div class="form-actions">
+                    <button type="submit" class="btn btn-primary">Save Contract</button>
+                    <a href="/index.php" class="btn btn-secondary">Cancel</a>
+                </div>
+            </form>
+        </div>
+    </div>
+    
+    <script>
+        let optionIndex = <?php echo count($options); ?>;
+        
+        function addOption() {
+            const container = document.getElementById('options-container');
+            const row = document.createElement('div');
+            row.className = 'option-row';
+            row.innerHTML = `
+                <input type="text" name="options[${optionIndex}][name]" placeholder="Option name">
+                <button type="button" class="option-toggle included" data-index="${optionIndex}" onclick="toggleOption(${optionIndex})">+</button>
+                <input type="hidden" name="options[${optionIndex}][is_included]" id="option_${optionIndex}_included" value="1">
+                <button type="button" class="remove-option" onclick="removeOption(this)">Remove</button>
+            `;
+            container.appendChild(row);
+            optionIndex++;
+        }
+        
+        function removeOption(button) {
+            button.closest('.option-row').remove();
+        }
+        
+        function toggleOption(index) {
+            const toggle = document.querySelector(`.option-toggle[data-index="${index}"]`);
+            const hidden = document.getElementById(`option_${index}_included`);
+            
+            if (toggle.classList.contains('included')) {
+                toggle.classList.remove('included');
+                toggle.classList.add('excluded');
+                toggle.textContent = '-';
+                hidden.value = '0';
+            } else {
+                toggle.classList.remove('excluded');
+                toggle.classList.add('included');
+                toggle.textContent = '+';
+                hidden.value = '1';
+            }
+        }
+        
+        function calculateYearlyPrice() {
+            const monthly = parseFloat(document.getElementById('monthly_price').value) || 0;
+            if (monthly > 0) {
+                document.getElementById('yearly_price').value = (monthly * 12).toFixed(2);
+            }
+        }
+        
+        function calculateMonthlyPrice() {
+            const yearly = parseFloat(document.getElementById('yearly_price').value) || 0;
+            if (yearly > 0) {
+                document.getElementById('monthly_price').value = (yearly / 12).toFixed(2);
+            }
+        }
+    </script>
+</body>
+</html>
+

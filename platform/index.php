@@ -109,11 +109,15 @@ if (isset($_POST['action']) && isset($_POST['site_id'])) {
                     <p>No sites added yet. <a href="/add-site.php">Add your first site</a></p>
                 </div>
             <?php else: ?>
-                <?php foreach ($sites as $site): ?>
+                <?php foreach ($sites as $site): 
+                    $contract = $db->get_contract($site['id']);
+                    $payment_status = $db->get_payment_status($contract);
+                ?>
                     <div class="site-card">
                         <div class="site-header">
                             <h2><?php echo htmlspecialchars($site['name']); ?></h2>
                             <div class="site-actions">
+                                <a href="/contract.php?site_id=<?php echo $site['id']; ?>" class="btn btn-small">Contract</a>
                                 <a href="/edit-site.php?id=<?php echo $site['id']; ?>" class="btn btn-small">Edit</a>
                                 <a href="/index.php?delete=1&id=<?php echo $site['id']; ?>" 
                                    class="btn btn-small btn-danger" 
@@ -125,6 +129,37 @@ if (isset($_POST['action']) && isset($_POST['site_id'])) {
                             <p><strong>URL:</strong> <a href="<?php echo htmlspecialchars($site['url']); ?>" target="_blank"><?php echo htmlspecialchars($site['url']); ?></a></p>
                             <?php if ($site['last_checked']): ?>
                                 <p><strong>Last Checked:</strong> <?php echo date('Y-m-d H:i:s', strtotime($site['last_checked'])); ?></p>
+                            <?php endif; ?>
+                            
+                            <?php if ($contract): ?>
+                                <div class="contract-info">
+                                    <p><strong>Contract:</strong> <?php echo htmlspecialchars($contract['contract_name']); ?>
+                                        <span class="payment-status payment-<?php echo $payment_status; ?>" title="<?php 
+                                            echo $payment_status === 'paid' ? 'Payment received' : ($payment_status === 'overdue' ? 'Payment overdue' : 'Payment due');
+                                        ?>"></span>
+                                    </p>
+                                    <p><strong>Price:</strong> 
+                                        <?php if ($contract['yearly_price'] > 0): ?>
+                                            $<?php echo number_format($contract['yearly_price'], 2); ?>/year
+                                            <?php if ($contract['monthly_price'] > 0): ?>
+                                                ($<?php echo number_format($contract['monthly_price'], 2); ?>/month)
+                                            <?php endif; ?>
+                                        <?php elseif ($contract['monthly_price'] > 0): ?>
+                                            $<?php echo number_format($contract['monthly_price'], 2); ?>/month
+                                        <?php else: ?>
+                                            Not set
+                                        <?php endif; ?>
+                                    </p>
+                                    <p><strong>Start:</strong> <?php echo date('Y-m-d', strtotime($contract['start_date'])); ?>
+                                        <?php if ($contract['end_date']): ?>
+                                            | <strong>End:</strong> <?php echo date('Y-m-d', strtotime($contract['end_date'])); ?>
+                                        <?php endif; ?>
+                                    </p>
+                                </div>
+                            <?php else: ?>
+                                <div class="contract-info">
+                                    <p><em>No contract set. <a href="/contract.php?site_id=<?php echo $site['id']; ?>">Add contract</a></em></p>
+                                </div>
                             <?php endif; ?>
                         </div>
                         

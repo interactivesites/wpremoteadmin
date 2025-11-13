@@ -1,6 +1,10 @@
 # Platform data directory
 platform/data/
 
+# Uploads directory (contracts)
+platform/uploads/contracts/*
+!platform/uploads/contracts/.htaccess
+
 # Configuration overrides
 platform/includes/config.local.php
 
