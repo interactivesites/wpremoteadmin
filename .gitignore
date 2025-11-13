@@ -1,0 +1,23 @@
+# Platform data directory
+platform/data/
+
+# Configuration overrides
+platform/includes/config.local.php
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+
+# WordPress plugin (if installed)
+wp-remote-update-plugin/
+

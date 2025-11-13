@@ -1,0 +1,16 @@
+# Protect sensitive files
+<FilesMatch "^(config\.php|Database\.php|WordPressClient\.php|auth\.php)$">
+    Order allow,deny
+    Deny from all
+</FilesMatch>
+
+# Protect data directory
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteRule ^data/ - [F,L]
+</IfModule>
+
+# Enable PHP error reporting (disable in production)
+# php_flag display_errors On
+# php_value error_reporting E_ALL
+
